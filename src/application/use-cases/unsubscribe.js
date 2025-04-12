@@ -2,6 +2,9 @@ const {
 	findByUnsubscribeToken,
 	unsubscribeById,
   } = require("../../infrastructure/repositories/subscription.repository.impl");
+  const {
+	subscriptionsUnsubscribedTotal,
+  } = require("../../infrastructure/metrics/metrics");
   
   const unsubscribe = async (token) => {
 	if (!token) {
@@ -19,13 +22,14 @@ const {
 	}
   
 	if (subscription.status === "unsubscribed") {
+		subscriptionsUnsubscribedTotal.inc();
 	  return {
 		message: "Unsubscribed successfully",
 	  };
 	}
   
 	await unsubscribeById(subscription._id);
-  
+	subscriptionsUnsubscribedTotal.inc();
 	return {
 	  message: "Unsubscribed successfully",
 	};

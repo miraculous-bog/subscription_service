@@ -2,7 +2,9 @@ const { subscribeToRepo } = require("../use-cases/subscribe-to-repo");
 const { confirmSubscription } = require("../use-cases/confirm-subscription");
 const { unsubscribe } = require("../use-cases/unsubscribe");
 const { getSubscriptionsByEmail } = require("../use-cases/get-subscriptions-by-email");
-
+const {
+	unsubscribeByEmailAndRepo,
+  } = require("../use-cases/unsubscribe-by-email-and-repo");
 const subscribeController = async (req, res, next) => {
   try {
     const result = await subscribeToRepo(req.body);
@@ -12,7 +14,14 @@ const subscribeController = async (req, res, next) => {
     next(error);
   }
 };
-
+const unsubscribeByEmailAndRepoHandler = async (req, res, next) => {
+	try {
+	  const result = await unsubscribeByEmailAndRepo(req.body);
+	  res.status(200).json(result);
+	} catch (error) {
+	  next(error);
+	}
+  };
 const confirmSubscriptionController = async (req, res, next) => {
   try {
     const result = await confirmSubscription(req.params.token);
@@ -48,4 +57,5 @@ module.exports = {
   confirmSubscriptionController,
   unsubscribeController,
   getSubscriptionsController,
+  unsubscribeByEmailAndRepoHandler
 };

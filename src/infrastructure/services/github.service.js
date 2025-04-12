@@ -1,7 +1,9 @@
 const axios = require("axios");
+const { redisClient } = require("../cache/redis.client");
 const { AppError } = require("../../shared/errors/app-error");
 
 let githubRateLimitBlockedUntil = 0;
+const GITHUB_CACHE_TTL_SECONDS = 600;
 
 const githubClient = axios.create({
   baseURL: "https://api.github.com",
@@ -70,14 +72,41 @@ const handleGithubApiError = (error) => {
   throw error;
 };
 
+const getCachedJson = async (key) => {
+  const cachedValue = await redisClient.get(key);
+
+  if (cachedValue === null) {
+    return { hasValue: false, value: null };
+  }
+
+  return {
+    hasValue: true,
+    value: JSON.parse(cachedValue),
+  };
+};
+
+const setCachedJson = async (key, value) => {
+  await redisClient.set(key, JSON.stringify(value), {
+    EX: GITHUB_CACHE_TTL_SECONDS,
+  });
+};
+
 const checkRepositoryExists = async (fullName) => {
   ensureGithubRateLimitWindowIsOpen();
 
+  const cacheKey = `github:repo-exists:${fullName.toLowerCase()}`;
+  const cached = await getCachedJson(cacheKey);
+  if (cached.hasValue) {
+    return cached.value;
+  }
+
   try {
     await githubClient.get(`/repos/${fullName}`);
+    await setCachedJson(cacheKey, true);
     return true;
   } catch (error) {
     if (error.response?.status === 404) {
+      await setCachedJson(cacheKey, false);
       return false;
     }
 
@@ -88,18 +117,30 @@ const checkRepositoryExists = async (fullName) => {
 const getLatestRelease = async (fullName) => {
   ensureGithubRateLimitWindowIsOpen();
 
+  const cacheKey = `github:latest-release:${fullName.toLowerCase()}`;
+  const cached = await getCachedJson(cacheKey);
+
+  if (cached.hasValue) {
+    return cached.value;
+  }
+
   try {
+	
     const { data } = await githubClient.get(`/repos/${fullName}/releases/latest`);
 
-    return {
+    const release = {
       tagName: data.tag_name,
       name: data.name,
       htmlUrl: data.html_url,
       publishedAt: data.published_at,
       body: data.body,
     };
+
+    await setCachedJson(cacheKey, release);
+    return release;
   } catch (error) {
     if (error.response?.status === 404) {
+      await setCachedJson(cacheKey, null);
       return null;
     }
 
@@ -107,7 +148,12 @@ const getLatestRelease = async (fullName) => {
   }
 };
 
+const __resetGithubRateLimitStateForTests = () => {
+  githubRateLimitBlockedUntil = 0;
+};
+
 module.exports = {
   checkRepositoryExists,
   getLatestRelease,
+  __resetGithubRateLimitStateForTests,
 };

@@ -10,6 +10,11 @@ const { generateToken } = require("../../shared/utils/tokens");
 const { isValidRepoName } = require("../../shared/utils/validate-repo-name");
 const { AppError } = require("../../shared/errors/app-error");
 
+const {
+	subscriptionsCreatedTotal,
+	subscriptionReactivatedTotal,
+  } = require("../../infrastructure/metrics/metrics");
+
 const subscribeToRepo = async ({ email, repo }) => {
   if (!email || !repo) {
     throw new AppError("Email and repo are required", 400);
@@ -62,7 +67,7 @@ const subscribeToRepo = async ({ email, repo }) => {
       confirmToken,
       unsubscribeToken,
     });
-
+	subscriptionReactivatedTotal.inc();
     return {
       message: "Subscription successful. Confirmation email sent.",
     };
@@ -75,7 +80,7 @@ const subscribeToRepo = async ({ email, repo }) => {
     confirmToken,
     unsubscribeToken,
   });
-
+  subscriptionsCreatedTotal.inc();
   return {
     message: "Subscription successful. Confirmation email sent.",
   };

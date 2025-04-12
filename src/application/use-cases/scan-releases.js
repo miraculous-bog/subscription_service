@@ -7,15 +7,19 @@ const {
   const { getLatestRelease } = require("../../infrastructure/services/github.service");
   const { sendReleaseNotificationEmail } = require("../../infrastructure/services/email.service");
   const { AppError } = require("../../shared/errors/app-error");
-  
+  const {
+	scanRunsTotal,
+	releasesDetectedTotal,
+	githubApiRateLimitTotal,
+  } = require("../../infrastructure/metrics/metrics");
   const scanReleases = async () => {
 	const repositories = await findAll();
   
 	for (const repository of repositories) {
+	scanRunsTotal.inc();
 	  try {
 		console.log("Scanning repo:", repository.fullName);
 		console.log("Stored lastSeenTag:", repository.lastSeenTag);
-  
 		const latestRelease = await getLatestRelease(repository.fullName);
   
 		console.log("Latest release:", latestRelease?.tagName);
@@ -34,7 +38,7 @@ const {
 		  await touchLastCheckedAtById(repository._id);
 		  continue;
 		}
-  
+		releasesDetectedTotal.inc();
 		const activeSubscriptions = await findActiveByRepositoryId(repository._id);
   
 		console.log("Active subscriptions count:", activeSubscriptions.length);
@@ -53,6 +57,7 @@ const {
 		await updateLastSeenTagById(repository._id, latestRelease.tagName);
 	  } catch (error) {
 		if (error instanceof AppError && error.statusCode === 503) {
+		githubApiRateLimitTotal.inc();
 		  console.error(
 			`Scanner paused because GitHub rate limit was reached. Retry after ${error.meta?.retryAfterSeconds || 60}s`
 		  );

@@ -2,7 +2,9 @@ const {
 	findByConfirmToken,
 	confirmById,
   } = require("../../infrastructure/repositories/subscription.repository.impl");
-  
+  const {
+	subscriptionsConfirmedTotal,
+  } = require("../../infrastructure/metrics/metrics");
   const confirmSubscription = async (token) => {
 	if (!token) {
 	  const error = new Error("Invalid token");
@@ -19,13 +21,15 @@ const {
 	}
   
 	if (subscription.status === "active") {
+		subscriptionsConfirmedTotal.inc();
 	  return {
 		message: "Subscription confirmed successfully",
 	  };
+	  
 	}
   
 	await confirmById(subscription._id);
-  
+	subscriptionsConfirmedTotal.inc();
 	return {
 	  message: "Subscription confirmed successfully",
 	};

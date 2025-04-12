@@ -1,5 +1,20 @@
 const { Subscription } = require("../models/subscription.model");
-
+const  {GithubRepository} = require("../models/github-repository.model");
+const findByEmailAndRepositoryFullName = async (email, repo) => {
+	const githubRepository = await GithubRepository.findOne({
+	  fullName: repo,
+	});
+  
+	if (!githubRepository) {
+	  return null;
+	}
+  
+	return Subscription.findOne({
+	  email: email.toLowerCase(),
+	  repositoryId: githubRepository._id,
+	  status: { $in: ["active", "pending"] },
+	}).populate("repositoryId");
+  };
 const findByEmailAndRepositoryId = async (email, repositoryId) => {
   return Subscription.findOne({
     email,
@@ -79,4 +94,5 @@ module.exports = {
   reactivateById,
   findActiveByEmail,
   findActiveByRepositoryId,
+  findByEmailAndRepositoryFullName
 };

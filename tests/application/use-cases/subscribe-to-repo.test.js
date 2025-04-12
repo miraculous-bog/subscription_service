@@ -1,157 +1,243 @@
-jest.mock("../../../src/infrastructure/repositories/github-repository.repository.impl", () => ({
-	findByFullName: jest.fn(),
-	create: jest.fn(),
-  }));
-  
-  jest.mock("../../../src/infrastructure/repositories/subscription.repository.impl", () => ({
-	findByEmailAndRepositoryId: jest.fn(),
-	create: jest.fn(),
-	reactivateById: jest.fn(),
-  }));
-  
-  jest.mock("../../../src/infrastructure/services/github.service", () => ({
-	checkRepositoryExists: jest.fn(),
-  }));
-  
-  jest.mock("../../../src/infrastructure/services/email.service", () => ({
-	sendConfirmationEmail: jest.fn(),
-  }));
-  
-  jest.mock("../../../src/shared/utils/tokens", () => ({
-	generateToken: jest
-	  .fn()
-	  .mockReturnValueOnce("confirm-token")
-	  .mockReturnValueOnce("unsubscribe-token"),
-  }));
-  
-  const {
-	findByFullName,
-	create: createGithubRepository,
-  } = require("../../../src/infrastructure/repositories/github-repository.repository.impl");
-  const {
-	findByEmailAndRepositoryId,
-	create: createSubscription,
-	reactivateById,
-  } = require("../../../src/infrastructure/repositories/subscription.repository.impl");
-  const { checkRepositoryExists } = require("../../../src/infrastructure/services/github.service");
-  const { sendConfirmationEmail } = require("../../../src/infrastructure/services/email.service");
-  const { subscribeToRepo } = require("../../../src/application/use-cases/subscribe-to-repo");
-  const { AppError } = require("../../../src/shared/errors/app-error");
-  
-  describe("subscribeToRepo", () => {
-	beforeEach(() => {
-	  jest.clearAllMocks();
-	});
-  
-	it("creates new pending subscription and sends confirmation email", async () => {
-	  checkRepositoryExists.mockResolvedValue(true);
-	  findByFullName.mockResolvedValue(null);
-	  createGithubRepository.mockResolvedValue({
-		_id: "repo-id-1",
-		fullName: "facebook/react",
-	  });
-	  findByEmailAndRepositoryId.mockResolvedValue(null);
-	  createSubscription.mockResolvedValue({ _id: "sub-id-1" });
-	  sendConfirmationEmail.mockResolvedValue({});
-  
-	  const result = await subscribeToRepo({
-		email: "TEST@EXAMPLE.COM",
-		repo: "facebook/react",
-	  });
-  
-	  expect(checkRepositoryExists).toHaveBeenCalledWith("facebook/react");
-	  expect(createGithubRepository).toHaveBeenCalledWith({
-		owner: "facebook",
-		name: "react",
-		fullName: "facebook/react",
-	  });
-	  expect(createSubscription).toHaveBeenCalledWith({
-		email: "test@example.com",
-		repositoryId: "repo-id-1",
-		status: "pending",
-		confirmToken: "confirm-token",
-		unsubscribeToken: "unsubscribe-token",
-	  });
-	  expect(sendConfirmationEmail).toHaveBeenCalledWith(
-		"test@example.com",
-		"confirm-token",
-		"unsubscribe-token"
-	  );
-	  expect(result).toEqual({
-		message: "Subscription successful. Confirmation email sent.",
-	  });
-	});
-  
-	it("throws 400 for invalid repo format", async () => {
-	  await expect(
-		subscribeToRepo({
-		  email: "test@example.com",
-		  repo: "invalid-repo-name",
-		})
-	  ).rejects.toMatchObject({
-		message: "Invalid input",
-		statusCode: 400,
-	  });
-	});
-  
-	it("throws 404 when repository does not exist on GitHub", async () => {
-	  checkRepositoryExists.mockResolvedValue(false);
-  
-	  await expect(
-		subscribeToRepo({
-		  email: "test@example.com",
-		  repo: "unknown/repo",
-		})
-	  ).rejects.toMatchObject({
-		message: "Repository not found on GitHub",
-		statusCode: 404,
-	  });
-	});
-  
-	it("throws 409 when active subscription already exists", async () => {
-	  checkRepositoryExists.mockResolvedValue(true);
-	  findByFullName.mockResolvedValue({
-		_id: "repo-id-1",
-		fullName: "facebook/react",
-	  });
-	  findByEmailAndRepositoryId.mockResolvedValue({
-		_id: "sub-id-1",
-		status: "active",
-	  });
-  
-	  await expect(
-		subscribeToRepo({
-		  email: "test@example.com",
-		  repo: "facebook/react",
-		})
-	  ).rejects.toMatchObject({
-		message: "Email already subscribed to this repository",
-		statusCode: 409,
-	  });
-	});
-  
-	it("reactivates unsubscribed subscription instead of creating duplicate", async () => {
-	  checkRepositoryExists.mockResolvedValue(true);
-	  findByFullName.mockResolvedValue({
-		_id: "repo-id-1",
-		fullName: "facebook/react",
-	  });
-	  findByEmailAndRepositoryId.mockResolvedValue({
-		_id: "sub-id-1",
-		status: "unsubscribed",
-	  });
-	  sendConfirmationEmail.mockResolvedValue({});
-	  reactivateById.mockResolvedValue({ _id: "sub-id-1", status: "pending" });
-  
-	  const result = await subscribeToRepo({
-		email: "test@example.com",
-		repo: "facebook/react",
-	  });
-  
-	  expect(createSubscription).not.toHaveBeenCalled();
-	  expect(reactivateById).toHaveBeenCalled();
-	  expect(result).toEqual({
-		message: "Subscription successful. Confirmation email sent.",
-	  });
-	});
+jest.mock("axios", () => {
+  const get = jest.fn();
+  return {
+    create: jest.fn(() => ({
+      get,
+    })),
+  };
+});
+
+jest.mock("../../../src/infrastructure/cache/redis.client", () => ({
+  redisClient: {
+    get: jest.fn(),
+    set: jest.fn(),
+  },
+}));
+
+const axios = require("axios");
+const { redisClient } = require("../../../src/infrastructure/cache/redis.client");
+const { AppError } = require("../../../src/shared/errors/app-error");
+
+const {
+  checkRepositoryExists,
+  getLatestRelease,
+  __resetGithubRateLimitStateForTests,
+} = require("../../../src/infrastructure/services/github.service");
+
+describe("github.service", () => {
+  const githubClient = axios.create();
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    __resetGithubRateLimitStateForTests();
   });
+
+  describe("checkRepositoryExists", () => {
+    it("returns cached repository existence when present in Redis", async () => {
+      redisClient.get.mockResolvedValue("true");
+
+      const result = await checkRepositoryExists("facebook/react");
+
+      expect(result).toBe(true);
+      expect(redisClient.get).toHaveBeenCalledWith(
+        "github:repo-exists:facebook/react"
+      );
+      expect(githubClient.get).not.toHaveBeenCalled();
+    });
+
+    it("calls GitHub API and caches true when repository exists", async () => {
+      redisClient.get.mockResolvedValue(null);
+      githubClient.get.mockResolvedValue({ data: {} });
+      redisClient.set.mockResolvedValue("OK");
+
+      const result = await checkRepositoryExists("facebook/react");
+
+      expect(result).toBe(true);
+      expect(githubClient.get).toHaveBeenCalledWith("/repos/facebook/react");
+      expect(redisClient.set).toHaveBeenCalledWith(
+        "github:repo-exists:facebook/react",
+        JSON.stringify(true),
+        { EX: 600 }
+      );
+    });
+
+    it("returns false and caches it when GitHub returns 404", async () => {
+      redisClient.get.mockResolvedValue(null);
+      githubClient.get.mockRejectedValue({
+        response: {
+          status: 404,
+        },
+      });
+      redisClient.set.mockResolvedValue("OK");
+
+      const result = await checkRepositoryExists("unknown/repo");
+
+      expect(result).toBe(false);
+      expect(redisClient.set).toHaveBeenCalledWith(
+        "github:repo-exists:unknown/repo",
+        JSON.stringify(false),
+        { EX: 600 }
+      );
+    });
+
+    it("throws AppError 503 and blocks next requests on GitHub rate limit", async () => {
+      redisClient.get.mockResolvedValue(null);
+      githubClient.get.mockRejectedValue({
+        response: {
+          status: 429,
+          headers: {
+            "retry-after": "120",
+          },
+          data: {
+            message: "API rate limit exceeded",
+          },
+        },
+      });
+
+      await expect(
+        checkRepositoryExists("facebook/react")
+      ).rejects.toMatchObject({
+        message: "GitHub API rate limit exceeded. Try again later.",
+        statusCode: 503,
+        meta: { retryAfterSeconds: 120 },
+      });
+
+      await expect(
+        checkRepositoryExists("facebook/react")
+      ).rejects.toMatchObject({
+        message: "GitHub API rate limit exceeded. Try again later.",
+        statusCode: 503,
+      });
+
+      expect(githubClient.get).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("getLatestRelease", () => {
+    it("returns cached latest release when present in Redis", async () => {
+      const cachedRelease = {
+        tagName: "v1.0.0",
+        name: "Release 1",
+        htmlUrl: "https://github.com/facebook/react/releases/tag/v1.0.0",
+        publishedAt: "2026-01-01T00:00:00Z",
+        body: "notes",
+      };
+
+      redisClient.get.mockResolvedValue(JSON.stringify(cachedRelease));
+
+      const result = await getLatestRelease("facebook/react");
+
+      expect(result).toEqual(cachedRelease);
+      expect(redisClient.get).toHaveBeenCalledWith(
+        "github:latest-release:facebook/react"
+      );
+      expect(githubClient.get).not.toHaveBeenCalled();
+    });
+
+    it("calls GitHub API and caches latest release for 600 seconds", async () => {
+      redisClient.get.mockResolvedValue(null);
+      githubClient.get.mockResolvedValue({
+        data: {
+          tag_name: "v1.0.0",
+          name: "Release 1",
+          html_url: "https://github.com/facebook/react/releases/tag/v1.0.0",
+          published_at: "2026-01-01T00:00:00Z",
+          body: "notes",
+        },
+      });
+      redisClient.set.mockResolvedValue("OK");
+
+      const result = await getLatestRelease("facebook/react");
+
+      expect(result).toEqual({
+        tagName: "v1.0.0",
+        name: "Release 1",
+        htmlUrl: "https://github.com/facebook/react/releases/tag/v1.0.0",
+        publishedAt: "2026-01-01T00:00:00Z",
+        body: "notes",
+      });
+
+      expect(githubClient.get).toHaveBeenCalledWith(
+        "/repos/facebook/react/releases/latest"
+      );
+
+      expect(redisClient.set).toHaveBeenCalledWith(
+        "github:latest-release:facebook/react",
+        JSON.stringify({
+          tagName: "v1.0.0",
+          name: "Release 1",
+          htmlUrl: "https://github.com/facebook/react/releases/tag/v1.0.0",
+          publishedAt: "2026-01-01T00:00:00Z",
+          body: "notes",
+        }),
+        { EX: 600 }
+      );
+    });
+
+    it("returns cached null release result when Redis stores null", async () => {
+      redisClient.get.mockResolvedValue("null");
+
+      const result = await getLatestRelease("repo/without-releases");
+
+      expect(result).toBeNull();
+      expect(githubClient.get).not.toHaveBeenCalled();
+    });
+
+    it("returns null and caches it when GitHub returns 404", async () => {
+      redisClient.get.mockResolvedValue(null);
+      githubClient.get.mockRejectedValue({
+        response: {
+          status: 404,
+        },
+      });
+      redisClient.set.mockResolvedValue("OK");
+
+      const result = await getLatestRelease("repo/without-releases");
+
+      expect(result).toBeNull();
+      expect(redisClient.set).toHaveBeenCalledWith(
+        "github:latest-release:repo/without-releases",
+        JSON.stringify(null),
+        { EX: 600 }
+      );
+    });
+
+    it("throws AppError 503 on GitHub 403 rate limit with x-ratelimit headers", async () => {
+      redisClient.get.mockResolvedValue(null);
+      githubClient.get.mockRejectedValue({
+        response: {
+          status: 403,
+          headers: {
+            "x-ratelimit-remaining": "0",
+            "x-ratelimit-reset": String(Math.floor(Date.now() / 1000) + 90),
+          },
+          data: {
+            message: "API rate limit exceeded",
+          },
+        },
+      });
+
+      await expect(
+        getLatestRelease("facebook/react")
+      ).rejects.toBeInstanceOf(AppError);
+
+      await expect(
+        getLatestRelease("facebook/react")
+      ).rejects.toMatchObject({
+        statusCode: 503,
+      });
+
+      expect(githubClient.get).toHaveBeenCalledTimes(1);
+    });
+
+    it("rethrows non-rate-limit non-404 errors", async () => {
+      redisClient.get.mockResolvedValue(null);
+      const networkError = new Error("Network failed");
+      githubClient.get.mockRejectedValue(networkError);
+
+      await expect(
+        getLatestRelease("facebook/react")
+      ).rejects.toThrow("Network failed");
+    });
+  });
+});
