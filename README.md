@@ -136,6 +136,7 @@ Body:
   "email": "user@example.com",
   "repo": "facebook/react"
 }
+```
 ⚡ Redis Cache
 кешування GitHub API
 TTL: 10 хвилин
