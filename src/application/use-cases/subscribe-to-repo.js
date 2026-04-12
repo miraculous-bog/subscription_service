@@ -17,10 +17,10 @@ const subscribeToRepo = async ({ email, repo }) => {
     throw new Error("Invalid repository format");
   }
 
-  const repositoryExists = await checkRepositoryExists(repo);
+  const { exists, data } = await checkRepositoryExists(repo);
 
-  if (!repositoryExists) {
-    throw new Error("Repository not found");
+  if (!exists) {
+	throw new Error("Repository not found");
   }
 
   let githubRepository = await findByFullName(repo);
