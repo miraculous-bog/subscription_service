@@ -7,20 +7,21 @@ const { checkRepositoryExists } = require("../../infrastructure/services/github.
 const { sendConfirmationEmail } = require("../../infrastructure/services/email.service");
 const { generateToken } = require("../../shared/utils/tokens");
 const { isValidRepoName } = require("../../shared/utils/validate-repo-name");
+const { AppError } = require("../../shared/errors/app-error");
 
 const subscribeToRepo = async ({ email, repo }) => {
   if (!email || !repo) {
-    throw new Error("Email and repo are required");
+    throw new AppError("Email and repo are required", 400);
   }
 
   if (!isValidRepoName(repo)) {
-    throw new Error("Invalid repository format");
+    throw new AppError("Invalid input", 400);
   }
 
-  const { exists, data } = await checkRepositoryExists(repo);
+  const repositoryExists = await checkRepositoryExists(repo);
 
-  if (!exists) {
-	throw new Error("Repository not found");
+  if (!repositoryExists) {
+    throw new AppError("Repository not found on GitHub", 404);
   }
 
   let githubRepository = await findByFullName(repo);
@@ -43,11 +44,13 @@ const subscribeToRepo = async ({ email, repo }) => {
   );
 
   if (existingSubscription && existingSubscription.status !== "unsubscribed") {
-    throw new Error("Email already subscribed to this repository");
+    throw new AppError("Email already subscribed to this repository", 409);
   }
 
   const confirmToken = generateToken();
   const unsubscribeToken = generateToken();
+
+  await sendConfirmationEmail(normalizedEmail, confirmToken);
 
   await createSubscription({
     email: normalizedEmail,
@@ -56,8 +59,6 @@ const subscribeToRepo = async ({ email, repo }) => {
     confirmToken,
     unsubscribeToken,
   });
-
-  await sendConfirmationEmail(normalizedEmail, confirmToken);
 
   return {
     message: "Subscription successful. Confirmation email sent.",
