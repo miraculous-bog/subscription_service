@@ -1,0 +1,10 @@
+## Extras (planned)
+
+### API Key Authentication
+Middleware is prepared for securing endpoints via `x-api-key` header.
+
+### Redis Caching
+Cache layer abstraction is implemented. GitHub API responses can be cached with TTL.
+
+### Prometheus Metrics
+Metrics endpoint `/metrics` is prepared for integration with Prometheus.
