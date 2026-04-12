@@ -2,6 +2,7 @@ const { findByFullName, create: createGithubRepository } = require("../../infras
 const {
   findByEmailAndRepositoryId,
   create: createSubscription,
+  reactivateById,
 } = require("../../infrastructure/repositories/subscription.repository.impl");
 const { checkRepositoryExists } = require("../../infrastructure/services/github.service");
 const { sendConfirmationEmail } = require("../../infrastructure/services/email.service");
@@ -49,8 +50,23 @@ const subscribeToRepo = async ({ email, repo }) => {
 
   const confirmToken = generateToken();
   const unsubscribeToken = generateToken();
+  await sendConfirmationEmail(
+    normalizedEmail,
+    confirmToken,
+    unsubscribeToken,
+	repo
+  );
 
-  await sendConfirmationEmail(normalizedEmail, confirmToken);
+  if (existingSubscription && existingSubscription.status === "unsubscribed") {
+    await reactivateById(existingSubscription._id, {
+      confirmToken,
+      unsubscribeToken,
+    });
+
+    return {
+      message: "Subscription successful. Confirmation email sent.",
+    };
+  }
 
   await createSubscription({
     email: normalizedEmail,
